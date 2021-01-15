@@ -1,0 +1,1 @@
+export const hostname = "http://192.168.10.15:12344";
