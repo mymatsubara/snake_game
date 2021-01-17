@@ -3,7 +3,7 @@
 
 #define MAX_SNAKES 10
 #define MAX_NODES 15
-#define MAX_FOODS 5
+#define MAX_FOODS 10
 #define DEFAULT_WIDTH 30
 #define DEFAULT_HEIGHT 30
 #define FOOD_SPAWN_RATE 100

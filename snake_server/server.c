@@ -71,8 +71,6 @@ void* client_thread(client_data* c_data) {
 
         pthread_mutex_lock(c_data->mutex);
         handle_client_request(c_data->addr, c_data->sockfd, buf, client_snake, c_data->g);
-        // game_info_to_buf(c_data->g, c_data->addr, buf);
-        // printf("%s\n", buf);
 
         pthread_mutex_unlock(c_data->mutex);
     }

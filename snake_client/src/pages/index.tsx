@@ -85,7 +85,7 @@ const Index = () => {
               Points
             </Box>
             {gameState.snakes
-              .sort((s1, s2) => s1.points - s2.points)
+              .sort((s1, s2) => s2.points - s1.points)
               .map((snake, i) => (
                 <Flex alignItems="center" justifyContent="space-between">
                   <Box fontWeight="semibold">
