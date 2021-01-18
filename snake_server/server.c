@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include "game.c"
 
+// Data passed to client thread
 typedef struct client_data {
     int sockfd;
     game* g;
@@ -17,14 +18,98 @@ typedef struct client_data {
     struct in_addr addr;
 } client_data;
 
+// Data passed to game thread
 typedef struct game_data {
     game* g;
     pthread_mutex_t* mutex;
 } game_data;
 
-void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s, game* g);
 void* game_thread(game_data* g_data);
 void* client_thread(client_data* c_data);
+void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s, game* g);
+
+int main(int argc, char *argv[]) {
+    game* g = game_start(DEFAULT_WIDTH, DEFAULT_WIDTH);
+
+    int sockfd, new_sockfd;
+    pid_t child_pid;
+    char buf[BUFSIZ];
+    struct sockaddr_in serv, cInt;
+    socklen_t sin_siz;
+    int port;
+    pthread_t client_threads[MAX_SNAKES];
+    pthread_t game_t;
+    pthread_mutex_t mutex;
+
+    game_data* g_data = malloc(sizeof(game_data));
+    g_data->g = g;
+    g_data->mutex = &mutex;
+
+    pthread_mutex_init(&mutex, NULL);
+    // Creating game thread
+    pthread_create(&game_t, NULL, (void *) game_thread, (void *) g_data);
+
+    if (argc != 3) {
+        printf("Usage: ./server <host> <port>\n");
+        exit(1);
+    }
+
+    if ((sockfd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("socket");
+        exit(1);
+    }
+
+    serv.sin_family = PF_INET;
+    port = strtol(argv[2], NULL, 10);
+    serv.sin_port = htons(port);
+    inet_aton(argv[1], &serv.sin_addr);
+    sin_siz = sizeof(struct sockaddr_in);
+
+    if (bind(sockfd, (struct sockaddr*) &serv, sizeof(serv)) < 0) {
+        perror("bind");
+        exit(1);
+    }
+    printf("bind() called\n");
+
+    if (listen(sockfd, SOMAXCONN) < 0) {
+        perror("listen");
+        exit(1);
+    }
+    printf("listen() called\n");
+
+    int i;
+
+    while (1) {
+        if ((new_sockfd = accept(sockfd, (struct sockaddr*) &cInt, &sin_siz)) < 0) {
+            perror("accept");
+        }
+
+        client_data* c_data = malloc(sizeof(client_data));
+        c_data->sockfd = new_sockfd;
+        c_data->g = g;
+        c_data->mutex = &mutex;
+        c_data->addr = cInt.sin_addr;
+
+        // Verify if there's thread slots for new client
+        for (i = 0; i < MAX_SNAKES; i++) {
+            if (client_threads[i] == 0) {
+                // Create new thread for the client
+                c_data->t = &client_threads[i];
+                pthread_create(&client_threads[i], NULL, (void *) client_thread, (void *) c_data);
+                printf("Client allocated to thread %d.\n", i);
+                break;
+            }
+        }
+
+        // If all thread slots are used
+        if (i == MAX_SNAKES - 1) {
+            close(new_sockfd);
+            free(c_data);
+        }
+    }
+    close(sockfd);
+    return 0;
+}
 
 void* game_thread(game_data* g_data) {    
     int ticks = 0;
@@ -69,9 +154,8 @@ void* client_thread(client_data* c_data) {
         }
         buf[len] = '\0';
 
-        pthread_mutex_lock(c_data->mutex);
+        pthread_mutex_lock(c_data->mutex);        
         handle_client_request(c_data->addr, c_data->sockfd, buf, client_snake, c_data->g);
-
         pthread_mutex_unlock(c_data->mutex);
     }
     pthread_mutex_lock(c_data->mutex);
@@ -106,6 +190,7 @@ void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s,
 
         printf("/%s/%s", relative_parts[0], relative_parts[1]);
 
+        // GET /game_state
         if (strncasecmp("game_state", relative_parts[0], 10) == 0) {
             memset(buf, 0, BUFSIZ);
             
@@ -115,6 +200,8 @@ void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s,
             buf[32 + new_pos] = ' ';
             send(sockfd, buf, buf_size + pos - 1, 0);
         }
+
+        // GET /move/<MOVE>
         else if (strncasecmp("move", relative_parts[0], 4) == 0) {
             switch (relative_parts[1][0]) {
                 case '0':
@@ -131,7 +218,10 @@ void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s,
                     break;
             }
             send(sockfd, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\n\r\nOK", 105, 0);
-        } else if (strncasecmp("game_config", relative_parts[0], 11) == 0) {
+        } 
+
+        // GET /game_config
+        else if (strncasecmp("game_config", relative_parts[0], 11) == 0) {
             int buf_size = sprintf(buf, "HTTP/1.1 200 OK\r\nContent-Length:        \r\nAccess-Control-Allow-Origin: *\r\nContent-Type:application/json\r\n\r\n");
             int pos = game_config_to_buf(g, &buf[buf_size]);
             int new_pos = sprintf(&buf[32], "%d", pos);
@@ -140,85 +230,4 @@ void handle_client_request(struct in_addr addr, int sockfd, char* buf, snake* s,
             send(sockfd, buf, buf_size + pos, 0);
         }
     }
-}
-
-int main(int argc, char *argv[]) {
-    game* g = game_start(DEFAULT_WIDTH, DEFAULT_WIDTH);
-
-    int sockfd, new_sockfd;
-    pid_t child_pid;
-    char buf[BUFSIZ];
-    struct sockaddr_in serv, cInt;
-    socklen_t sin_siz;
-    int port;
-    pthread_t client_threads[MAX_SNAKES];
-    pthread_t game_t;
-    pthread_mutex_t mutex;
-
-    game_data* g_data = malloc(sizeof(game_data));
-    g_data->g = g;
-    g_data->mutex = &mutex;
-
-    pthread_mutex_init(&mutex, NULL);
-    pthread_create(&game_t, NULL, (void *) game_thread, (void *) g_data);
-
-    if (argc != 3) {
-        printf("Usage: ./server <host> <port>\n");
-        exit(1);
-    }
-
-    if ((sockfd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket");
-        exit(1);
-    }
-
-    serv.sin_family = PF_INET;
-    port = strtol(argv[2], NULL, 10);
-    serv.sin_port = htons(port);
-    inet_aton(argv[1], &serv.sin_addr);
-    sin_siz = sizeof(struct sockaddr_in);
-
-    if (bind(sockfd, (struct sockaddr*) &serv, sizeof(serv)) < 0) {
-        perror("bind");
-        exit(1);
-    }
-    printf("bind() called\n");
-
-    if (listen(sockfd, SOMAXCONN) < 0) {
-        perror("listen");
-        exit(1);
-    }
-    printf("listen() called\n");
-
-    int i;
-
-    while (1) {
-        if ((new_sockfd = accept(sockfd, (struct sockaddr*) &cInt, &sin_siz)) < 0) {
-            perror("accept");
-        }
-
-        client_data* c_data = malloc(sizeof(client_data));
-        c_data->sockfd = new_sockfd;
-        c_data->g = g;
-        c_data->mutex = &mutex;
-        c_data->addr = cInt.sin_addr;
-
-        for (i = 0; i < MAX_SNAKES; i++) {
-            if (client_threads[i] == 0) {
-                c_data->t = &client_threads[i];
-                pthread_create(&client_threads[i], NULL, (void *) client_thread, (void *) c_data);
-                printf("end: %d\n", i);
-                break;
-            } else {
-
-                printf("%ld\n", client_threads[i]);
-            }
-        }
-
-        if (i == MAX_SNAKES - 1) {
-            close(new_sockfd);
-        }
-    }
-    close(sockfd);
-    return 0;
 }
